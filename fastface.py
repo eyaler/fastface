@@ -9,6 +9,7 @@ import numpy as np
 from multiprocessing import Process, Queue
 import queue
 
+draw_freq = 3
 fac = 0.5
 src = 0
 predictor_path = 'd:/data/faces/shape_predictor_68_face_landmarks.dat'
@@ -121,10 +122,12 @@ if __name__ == '__main__':
 		if frame is None:
 			break
 
-		for p in det.read(frame, fac):
-			draw_face(frame, p, fac)
-			#for (x, y) in p:
-			#	cv2.circle(frame, (int(x / fac), int(y / fac)), 1, (255, 0, 0), -1)
+		faces = det.read(frame, fac)
+		if frame_cnt % draw_freq == 0:
+			for p in faces:
+				draw_face(frame, p, fac)
+				#for (x, y) in p:
+				#	cv2.circle(frame, (int(x / fac), int(y / fac)), 1, (255, 0, 0), -1)
 
 		cv2.imshow('', frame)
 		if cv2.waitKey(1) & 0xFF == 27:
