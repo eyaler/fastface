@@ -10,15 +10,56 @@ import numpy as np
 from multiprocessing import Process, Value
 import argparse
 
+
 cam_src = 0
 mirror = True
-scale_frac = 0.5
+downsize = 240
 show_face = True
 show_lines = True
 show_marks = False
 line_color = (255, 0, 0)
 mark_color = (255,0,192)
 predictor_path = 'd:/data/faces/shape_predictor_68_face_landmarks.dat'
+
+
+class Camera:
+	def __init__(self, src=0, mirror=False, res=None):
+		self.frame = None
+		self.src = src
+		self.mirror = mirror
+		self.stream = cv2.VideoCapture(src)
+		if not self.stream.isOpened():
+			print('Error: camera %d not available' % self.src)
+			self.terminated = True
+			return -1
+		if res is not None:
+			self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, res[0])
+			self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, res[1])
+		self.terminated = False
+		self.read()
+		t = Thread(target=self.update, args=())
+		t.daemon = True
+		t.start()
+
+	def update(self):
+		while not self.terminated:
+			self.read()
+
+	def read(self):
+		grabbed, frame = self.stream.read()
+		if not grabbed or frame is None:
+			print('Error: camera %d not available'%self.src)
+			self.terminate()
+		elif self.mirror:
+			self.frame = cv2.flip(frame, 1)
+		else:
+			self.frame = frame
+
+	def terminate(self):
+		if not self.terminated:
+			self.stream.release()
+		self.terminated = True
+
 
 class Display:
 	def __init__(self, cam, det):
@@ -30,7 +71,7 @@ class Display:
 	def update(self, cam, det):
 		frame_cnt = 0
 		cur_frame = None
-		while cam.frame is None:
+		while not self.terminated and cam.frame is None:
 			pass
 		start = time.time()
 		while not self.terminated:
@@ -73,42 +114,8 @@ class Display:
 		self.terminated = True
 
 
-class Camera:
-	def __init__(self, src=0, mirror=False):
-		self.src = src
-		self.mirror = mirror
-		self.stream = cv2.VideoCapture(src)
-		if not self.stream.isOpened():
-			print('Error: camera %d not available' % self.src)
-			self.terminated = True
-			return -1
-		self.terminated = False
-		self.read()
-		t = Thread(target=self.update, args=())
-		t.daemon = True
-		t.start()
-
-	def update(self):
-		while not self.terminated:
-			self.read()
-
-	def read(self):
-		grabbed, frame = self.stream.read()
-		if not grabbed or frame is None:
-			print('Error: camera %d not available'%self.src)
-			self.terminate()
-		elif self.mirror:
-			self.frame = cv2.flip(frame, 1)
-		else:
-			self.frame = frame
-
-	def terminate(self):
-		if not self.terminated:
-			self.stream.release()
-		self.terminated = True
-
 class Detect:
-	def __init__(self, cam_src=0, mirror=False):
+	def __init__(self, cam_src=0, mirror=False, res=None, downsize=None):
 		self.detector = dlib.get_frontal_face_detector()
 		self.predictor = dlib.shape_predictor(predictor_path)
 		self.faces = []
@@ -116,12 +123,12 @@ class Detect:
 		self.disp = None
 		self.terminated = Value('b', False)
 		self.external_terminate_signal = Value('b', False)
-		t = Process(target=self.update, args=(cam_src, mirror))
+		t = Process(target=self.update, args=(cam_src, mirror, res, downsize))
 		t.daemon = True
 		t.start()
 
-	def update(self, cam_src=0, mirror=False):
-		self.cam = Camera(cam_src, mirror)
+	def update(self, cam_src=0, mirror=False, res = None, downsize=None):
+		self.cam = Camera(cam_src, mirror, res)
 		self.disp = Display(self.cam, self)
 		while not self.terminated.value:
 			if self.external_terminate_signal.value or (self.cam is not None and self.cam.terminated) or (self.disp is not None and self.disp.terminated):
@@ -133,6 +140,9 @@ class Detect:
 				break
 
 			preproc_frame = cv2.cvtColor(self.cam.frame, cv2.COLOR_BGR2GRAY)
+			scale_frac = 1
+			if downsize:
+				scale_frac = downsize/len(preproc_frame)
 			if scale_frac != 1:
 				preproc_frame = cv2.resize(preproc_frame, None, fx=scale_frac, fy=scale_frac)
 			self.faces = [(np.array([[[p.x, p.y]] for p in self.predictor(preproc_frame, rect).parts()])/scale_frac).astype(int) for rect in self.detector(preproc_frame, 0)]
@@ -148,8 +158,10 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--src', type=int, help='camera source', default=cam_src)
 	parser.add_argument('--mirror', type=int, help='mirror camera', default=mirror)
+	parser.add_argument('--res', nargs='*', type=int, help='resolution')
+	parser.add_argument('--downsize', type=int, help='downsized frame height for computations', default=downsize)
 	args = parser.parse_args()
 
-	det = Detect(args.src, args.mirror)
+	det = Detect(args.src, args.mirror, args.res, args.downsize)
 	while not det.is_terminated():
 		pass
